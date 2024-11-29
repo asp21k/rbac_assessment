@@ -23,43 +23,49 @@ print_response() {
 echo "Testing Super Admin Login..."
 RESPONSE=$(curl -s -X POST "$BASE_URL/auth/login/" \
     -H "Content-Type: application/json" \
-    -d '{"email":"superadmin@example.com","password":"SuperAdmin123!"}')
+    -d '{"email":"asp21k@outlook.com","password":"asp21k.."}')
 ACCESS_TOKEN=$(echo $RESPONSE | python -m json.tool | grep access | cut -d '"' -f 4)
 print_response $? "$RESPONSE"
 
-# Test 2: Get all users
-echo -e "\nGetting all users..."
-RESPONSE=$(curl -s -X GET "$BASE_URL/users/" \
-    -H "Authorization: Bearer $ACCESS_TOKEN")
+# Test 2: Add permission "manage_roles"
+echo -e "\nAdding permission 'manage_roles'..."
+RESPONSE=$(curl -s -X POST "$BASE_URL/permissions/" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"manage_roles","description":"Permission to manage roles"}')
+MANAGE_ROLES_ID=$(echo $RESPONSE | python -m json.tool | grep '"id"' | head -n 1 | cut -d ':' -f 2 | tr -d ' ,')
 print_response $? "$RESPONSE"
 
-# Test 3: Create new role
-echo -e "\nCreating new role..."
+# Test 3: Add permission "manage_users"
+echo -e "\nAdding permission 'manage_users'..."
+RESPONSE=$(curl -s -X POST "$BASE_URL/permissions/" \
+    -H "Authorization: Bearer $ACCESS_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"manage_users","description":"Permission to manage users"}')
+MANAGE_USERS_ID=$(echo $RESPONSE | python -m json.tool | grep '"id"' | head -n 1 | cut -d ':' -f 2 | tr -d ' ,')
+print_response $? "$RESPONSE"
+
+# Test 4: Create role "admin" with both permissions
+echo -e "\nCreating role 'admin' with permissions..."
 RESPONSE=$(curl -s -X POST "$BASE_URL/roles/" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"name":"Test Role","description":"Test role description","permission_ids":[1]}')
+    -d "{\"name\":\"admin\",\"description\":\"Admin role\",\"permission_ids\":[${MANAGE_ROLES_ID},${MANAGE_USERS_ID}]}")
+ADMIN_ROLE_ID=$(echo $RESPONSE | python -m json.tool | grep '"id"' | head -n 1 | cut -d ':' -f 2 | tr -d ' ,')
 print_response $? "$RESPONSE"
 
-# Test 4: Get all roles
-echo -e "\nGetting all roles..."
-RESPONSE=$(curl -s -X GET "$BASE_URL/roles/" \
-    -H "Authorization: Bearer $ACCESS_TOKEN")
-print_response $? "$RESPONSE"
-
-# Test 5: Create new user
-echo -e "\nCreating new user..."
-RESPONSE=$(curl -s -X POST "$BASE_URL/auth/register/" \
-    -H "Content-Type: application/json" \
-    -d '{"email":"newuser@example.com","username":"newuser","password":"NewUser123!","first_name":"New","last_name":"User"}')
-print_response $? "$RESPONSE"
-
-# Test 6: Assign role to user
-echo -e "\nAssigning role to user..."
+# Test 5: Assign "admin" role to Super Admin
+echo -e "\nAssigning 'admin' role to Super Admin..."
 RESPONSE=$(curl -s -X POST "$BASE_URL/user-roles/" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"user":5,"role":2}')
+    -d "{\"user\":1,\"role\":${ADMIN_ROLE_ID}}") # Assuming Super Admin's user ID is 1
+print_response $? "$RESPONSE"
+
+# Test 6: Get all roles
+echo -e "\nGetting all roles..."
+RESPONSE=$(curl -s -X GET "$BASE_URL/roles/" \
+    -H "Authorization: Bearer $ACCESS_TOKEN")
 print_response $? "$RESPONSE"
 
 # Test 7: Get all permissions

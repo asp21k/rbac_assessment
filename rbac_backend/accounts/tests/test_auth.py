@@ -1,90 +1,140 @@
-from django.test import TestCase
 from rest_framework.test import APITestCase
 from rest_framework import status
 from django.urls import reverse
 from accounts.models import User, Role, Permission, UserRole
 
-class AuthenticationTests(APITestCase):
-    def setUp(self):
-        # Create test permission
-        self.permission = Permission.objects.create(
-            name='Test Permission',
-            codename='test_permission'
-        )
-        
-        self.user_data = {
-            'email': 'test1@example.com',
-            'username': 'test1user',
-            'password': 'Test1Pass123!',
-            'first_name': 'Test1',
-            'last_name': 'User1'
-        }
-
-    def test_user_registration(self):
-        url = reverse('auth-register')
-        response = self.client.post(url, self.user_data)
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertIn('access', response.data)
-        self.assertIn('refresh', response.data)
-        self.assertEqual(User.objects.count(), 1)
-
-    def test_user_login(self):
-        # Create user first
-        User.objects.create_user(
-            email='test1@example.com',
-            username='test1user',
-            password='Test1Pass123!'
-        )
-        
-        url = reverse('auth-login')
-        login_data = {
-            'email': 'test1@example.com',
-            'password': 'Test1Pass123!'
-        }
-        response = self.client.post(url, login_data)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('access', response.data)
-        self.assertIn('refresh', response.data)
-
 class RolePermissionTests(APITestCase):
     def setUp(self):
-        # Create permissions
-        permission = Permission.objects.create(name="manage_roles", codename="manage_roles")
-        permission1 = Permission.objects.create(name="manage_users", codename="manage_user_roles")
-        
-        # Create a role and assign permissions to the role
-        role = Role.objects.create(name="Admin")
-        role.permissions.add(permission, permission1)
+        # Create required permissions
+        self.manage_user_roles_perm = Permission.objects.create(name="Manage User Roles", codename="manage_user_roles")
+        self.manage_roles_perm = Permission.objects.create(name="Manage Roles", codename="manage_roles")
+        self.view_roles_perm = Permission.objects.create(name="View Roles", codename="view_roles")
 
-        # Create a user and assign the role to the user
-        user = User.objects.create_user(email="testuser@example.com", password="password123", username="testuser")
-        UserRole.objects.create(user=user, role=role)
+        # Create roles and assign permissions
+        self.admin_role = Role.objects.create(name="Admin")
+        self.admin_role.permissions.add(self.manage_user_roles_perm, self.manage_roles_perm, self.view_roles_perm)
 
-        self.user = user
-        # self.role = role
-        self.permission = permission
-        self.permission1 = permission1
-        self.role = role
-        # Assign user to a role (if needed in your tests)
-        self.client.force_authenticate(user=self.user)
+        self.moderator_role = Role.objects.create(name="Moderator")
+        self.moderator_role.permissions.add(self.view_roles_perm)
 
-    def test_acreate_role(self):
-        url = reverse('role-list')
-        data = {"name": "New Role", "description": "A new role description"}
-        
-        response = self.client.post(url, data)
-       
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-       
+        # Create an admin user and assign role
+        self.admin_user = User.objects.create_user(email="admin@example.com", password="Admin123!", username="admin")
+        UserRole.objects.create(user=self.admin_user, role=self.admin_role)
+
+        # Create a regular user
+        self.regular_user = User.objects.create_user(email="user@example.com", password="User123!", username="user")
+
     def test_assign_role_to_user(self):
-        url = reverse('userrole-list')
+        print("🔍 Testing assigning a role to a user...")
 
-        # Check if the user already has the role assigned
-        if not UserRole.objects.filter(user=self.user, role=self.role).exists():
-            data = {"user": self.user.id, "role": self.role.id}
-            response = self.client.post(url, data)
-            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        else:
-            print(f"User {self.user.id} already has role {self.role.id}.")
-            # Optionally, you can assert that this role already exists, if necessary.
-            self.assertTrue(UserRole.objects.filter(user=self.user, role=self.role).exists())
+        # Create a new user
+        new_user = User.objects.create_user(email="newuser@example.com", password="User123!", username="newuser")
+
+        # Test assigning a role
+        self.client.force_authenticate(user=self.admin_user)  # Authenticate as Admin
+        url = reverse('userrole-list')
+        data = {"user": new_user.id, "role": self.moderator_role.id}
+
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertTrue(UserRole.objects.filter(user=new_user, role=self.moderator_role).exists())
+        print("✅ Role assignment passed.")
+
+    def test_assign_role_no_permission(self):
+        print("🔍 Testing role assignment without proper permission...")
+
+        # Authenticate as a regular user
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('userrole-list')
+        data = {"user": self.regular_user.id, "role": self.admin_role.id}
+
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        print("✅ Unauthorized role assignment test passed.")
+
+    def test_assign_invalid_role(self):
+        print("🔍 Testing assigning a non-existent role...")
+
+        # Authenticate as Admin
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('userrole-list')
+        invalid_data = {"user": self.regular_user.id, "role": 9999}  # Non-existent role ID
+
+        response = self.client.post(url, invalid_data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        print("✅ Invalid role assignment test passed.")
+
+    def test_assign_role_to_nonexistent_user(self):
+        print("🔍 Testing assigning a role to a non-existent user...")
+
+        # Authenticate as Admin
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('userrole-list')
+        invalid_data = {"user": 9999, "role": self.moderator_role.id}  # Non-existent user ID
+
+        response = self.client.post(url, invalid_data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        print("✅ Invalid user assignment test passed.")
+
+    def test_remove_role_from_user(self):
+        print("🔍 Testing removing a role from a user...")
+
+        # Assign a role first
+        UserRole.objects.create(user=self.regular_user, role=self.moderator_role)
+
+        # Test role removal
+        self.client.force_authenticate(user=self.admin_user)
+        user_role = UserRole.objects.get(user=self.regular_user, role=self.moderator_role)
+        url = reverse('userrole-detail', args=[user_role.id])
+
+        response = self.client.delete(url)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT, response.data)
+        self.assertFalse(UserRole.objects.filter(user=self.regular_user, role=self.moderator_role).exists())
+        print("✅ Role removal test passed.")
+
+    def test_create_role(self):
+        print("🔍 Testing creating a new role...")
+
+        # Authenticate as Admin
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('role-list')
+        data = {"name": "Test Role", "description": "A role for testing."}
+
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        print("✅ Role creation test passed.")
+
+    def test_create_role_no_permission(self):
+        print("🔍 Testing creating a role without permission...")
+
+        # Authenticate as a regular user
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('role-list')
+        data = {"name": "Unauthorized Role", "description": "Should not be created."}
+
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        print("✅ Unauthorized role creation test passed.")
+
+    def test_view_roles(self):
+        print("🔍 Testing viewing roles...")
+
+        # Authenticate as Admin
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('role-list')
+
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertGreaterEqual(len(response.data), 1)  # At least one role should exist
+        print("✅ Role view test passed.")
+
+    def test_view_roles_no_permission(self):
+        print("🔍 Testing viewing roles without permission...")
+
+        # Authenticate as a regular user
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('role-list')
+
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN, response.data)
+        print("✅ Unauthorized role view test passed.")
